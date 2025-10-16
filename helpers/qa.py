@@ -10,7 +10,7 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 
 # ---------------- Configuration ----------------
-PROJECT_ID = "hrl-dev-genai"         # <-- change if needed
+PROJECT_ID = "stoked-courier-475320-g9"         # <-- change if needed
 LOCATION   = "us-central1"
 MODEL_NAME = "gemini-2.0-flash-001"
 
