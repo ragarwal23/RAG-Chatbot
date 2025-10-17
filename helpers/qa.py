@@ -33,7 +33,7 @@ ANSWER_PROMPT = PromptTemplate(
         "Context (numbered snippets):\n{context}\n\n"
         "Instructions:\n"
         "- Be concise and accurate.\n"
-        "- If helpful, cite snippets like [1], [2] based on the numbering below.\n\n"
+        "- At the end of your answer, cite your sources in the format: `Sources: <doc_name> (p. X), <doc_name> (pp. Y-Z)` based on the context below.\n\n"
         "Answer:"
     ),
 )
@@ -52,7 +52,7 @@ SAMPLES_PROMPT = PromptTemplate(
 def synthesize_answer(question: str, contexts: List[Dict]) -> str:
     """
     Make a grounded answer using Gemini and the retrieved contexts.
-    Each context dict is expected to include: { 'filename': str, 'text': str, 'score': float? }
+    Each context dict is expected to include: { 'filename': str, 'text': str, 'page': int?, 'score': float? }
     """
     try:
         # Build a compact, numbered context block
@@ -61,13 +61,14 @@ def synthesize_answer(question: str, contexts: List[Dict]) -> str:
         budget = 12000  # simple character budget for prompt size
         for i, c in enumerate(contexts, start=1):
             fn = c.get("filename", "Unknown")
+            pg = c.get("page")
             tx = (c.get("text", "") or "").strip()
             # trim if needed to fit budget
             take = min(len(tx), max(0, budget - total))
             if take <= 0:
                 break
             snippet = tx[:take]
-            blocks.append(f"[{i}] {fn}\n{snippet}")
+            blocks.append(f"[{i}] {fn} (p. {pg})\n{snippet}")
             total += take + len(fn) + 6
 
         context_block = "\n\n".join(blocks) if blocks else "(no context provided)"

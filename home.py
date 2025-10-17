@@ -23,7 +23,7 @@ st.set_page_config(page_title="Internal Docs Q&A", page_icon="📘", layout="wid
 # -------------------- SESSION STATE ---------------------
 ss = st.session_state
 ss.setdefault("chat_history", [])   # [{"user": str, "assistant": str, "sources": List[dict]}]
-ss.setdefault("docs", [])           # [{"filename": str, "text": str}]
+ss.setdefault("docs", [])           # [{"filename": str, "text": str, "page": int?}]
 ss.setdefault("chunks", [])         # [{"id": str, "filename": str, "text": str}]
 ss.setdefault("index", None)        # retriever/index
 ss.setdefault("sample_qs", [])      # cached sample questions
@@ -37,6 +37,18 @@ st.markdown(
     .block-container { padding-top: 1.5rem; }
     .stChatFloatingInputContainer { border-top: 1px solid #eee; }
     .small-muted { color: #6c757d; font-size: 0.9rem; }
+    .user-msg {
+        background-color: #e6f3ff;
+        padding: 0.8rem 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .assistant-msg {
+        background-color: #f0f2f6;
+        padding: 0.8rem 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -165,21 +177,22 @@ if not ss.chat_history and not ss.docs:
 
 # ------------------- CHAT HISTORY VIEW ------------------
 for message in ss.chat_history:
-    st.markdown(f"**You:** {message['user']}")
-    st.markdown(f"**Assistant:** {message['assistant']}")
-    if show_sources and message.get("sources"):
-        with st.expander("View sources"):
-            for j, src in enumerate(message["sources"], 1):
-                fn = src.get("filename", "Unknown")
-                score = src.get("score")
-                sc = f" | score: {score:.3f}" if isinstance(score, (int, float)) else ""
-                st.markdown(f"**[{j}]** _{fn}_{sc}")
-                txt = src.get("text", "") or ""
-                st.markdown(txt[:1000] + ("..." if len(txt) > 1000 else ""))
-                st.markdown("---")
+    st.markdown(f'<div class="user-msg"><b>You:</b> {message["user"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="assistant-msg"><b>Assistant:</b><br>{message["assistant"]}</div>', unsafe_allow_html=True)
+    sources = message.get("sources")
+    # Source expander is not inside the colored box
+    if show_sources and sources:
+        with st.expander("View Top Source"):
+            src = sources[0]  # Show only the most relevant source
+            fn = src.get("filename", "Unknown")
+            pg = src.get("page")
+            pg_str = f" (p. {pg})" if pg else ""
+            st.markdown(f"**Source**: `{fn}{pg_str}`")
+            txt = src.get("text", "") or ""
+            st.markdown(txt[:1000] + ("..." if len(txt) > 1000 else ""))
 
 # ------------------- CHAT INPUT WORKFLOW ----------------
-placeholder = "Ask about T&M "
+placeholder = "Ask about your uploaded document"
 user_input = st.chat_input(placeholder)
 
 if not user_input and ss.get("_prefill"):
@@ -203,31 +216,41 @@ if user_input:
         st.experimental_rerun()
 
     else:
+        # Define a score threshold for what's considered a "strong" match.
+        # This will depend on your indexing/scoring method. For the simple TF-IDF
+        # here, scores are often low. A value around 0.1 is a reasonable starting point.
+        # You can tune this value to be more or less strict.
+        SCORE_THRESHOLD = 0.1
+
         with st.spinner("Searching your internal docs..."):
             try:
                 contexts = retrieve(ss.index, user_input, top_k=6) or []
             except Exception as e:
                 contexts = []
                 st.error(f"Retrieval failed: {e}")
-
-        with st.spinner("Drafting an answer..."):
-            try:
-                answer = synthesize_answer(user_input, contexts)
-            except Exception as e:
-                answer = f"Sorry, I couldn't synthesize an answer. ({e})"
-
+        
+        # Check if the top result meets the relevance threshold
+        if not contexts or contexts[0].get("score", 0.0) < SCORE_THRESHOLD:
+            answer = "No strong matches found—try narrower terms."
+            contexts = [] # Clear contexts so no sources are shown
+        else:
+            with st.spinner("Drafting an answer..."):
+                try:
+                    answer = synthesize_answer(user_input, contexts)
+                except Exception as e:
+                    answer = f"Sorry, I couldn't synthesize an answer. ({e})"
+        
         ss.chat_history.append({"user": user_input, "assistant": answer, "sources": contexts})
 
         # Render this turn immediately
-        st.markdown(f"**You:** {user_input}")
-        st.markdown(f"**Assistant:** {answer}")
+        st.markdown(f'<div class="user-msg"><b>You:</b> {user_input}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="assistant-msg"><b>Assistant:</b><br>{answer}</div>', unsafe_allow_html=True)
         if show_sources and contexts:
-            with st.expander("View sources"):
-                for j, src in enumerate(contexts, 1):
-                    fn = src.get("filename", "Unknown")
-                    score = src.get("score")
-                    sc = f" | score: {score:.3f}" if isinstance(score, (int, float)) else ""
-                    st.markdown(f"**[{j}]** _{fn}_{sc}")
-                    txt = src.get("text", "") or ""
-                    st.markdown(txt[:1000] + ("..." if len(txt) > 1000 else ""))
-                    st.markdown("---")
+            with st.expander("View Top Source"):
+                src = contexts[0]
+                fn = src.get("filename", "Unknown")
+                pg = src.get("page")
+                pg_str = f" (p. {pg})" if pg else ""
+                st.markdown(f"**Source**: `{fn}{pg_str}`")
+                txt = src.get("text", "") or ""
+                st.markdown(txt[:1000] + ("..." if len(txt) > 1000 else ""))

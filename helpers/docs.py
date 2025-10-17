@@ -17,15 +17,18 @@ CHUNK_OVERLAP = 120     # small overlap to preserve context
 def _ext(name: str) -> str:
     return os.path.splitext(name or "")[1].lower()
 
-def _read_pdf(file_bytes: bytes) -> str:
-    parts = []
+def _read_pdf_with_pages(file_bytes: bytes) -> List[Dict[str, any]]:
+    """Returns a list of {'page': int, 'text': str}."""
+    pages = []
     reader = PdfReader(BytesIO(file_bytes))
-    for page in reader.pages:
+    for i, page in enumerate(reader.pages, 1):
         try:
-            parts.append(page.extract_text() or "")
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append({'page': i, 'text': text})
         except Exception:
             continue
-    return "\n".join(parts).strip()
+    return pages
 
 def _read_docx(file_bytes: bytes) -> str:
     if DocxDocument is None:
@@ -60,17 +63,18 @@ def process_uploads(files) -> Dict[str, List[Dict]]:
     Returns:
       {
         "docs":   [{"filename": str, "text": str}],
-        "chunks": [{"id": str, "filename": str, "text": str}]
+        "chunks": [{"id": str, "filename": str, "text": str, "page": int}]
       }
     """
     docs, chunks = [], []
     for fi, f in enumerate(files):
         name = getattr(f, "name", f"file_{fi}")
         raw = f.getvalue() if hasattr(f, "getvalue") else (f.read() or b"")
-        ext = _ext(name)
+        ext = _ext(name); text = ""
 
         if ext == ".pdf":
-            text = _read_pdf(raw)
+            pages_data = _read_pdf_with_pages(raw)
+            text = "\n".join(p['text'] for p in pages_data)
         elif ext in (".docx",):
             text = _read_docx(raw)
         elif ext in (".txt", ".md", ".csv", ".log"):
@@ -84,12 +88,23 @@ def process_uploads(files) -> Dict[str, List[Dict]]:
 
         docs.append({"filename": name, "text": text})
 
-        # Chunk and label
-        for ci, chunk in enumerate(_chunk_text(text)):
-            chunks.append({
-                "id": f"{name}__chunk_{ci:04d}",
-                "filename": name,
-                "text": chunk
-            })
+        # Chunk and label with page numbers
+        if ext == ".pdf" and pages_data:
+            for page_info in pages_data:
+                page_num = page_info['page']
+                page_text = page_info['text']
+                for ci, chunk_text in enumerate(_chunk_text(page_text)):
+                    chunks.append({
+                        "id": f"{name}__p{page_num}_chunk_{ci:04d}",
+                        "filename": name,
+                        "text": chunk_text,
+                        "page": page_num
+                    })
+        else: # For non-PDF files, chunk the whole text
+            for ci, chunk_text in enumerate(_chunk_text(text)):
+                chunks.append({
+                    "id": f"{name}__chunk_{ci:04d}",
+                    "filename": name, "text": chunk_text, "page": 1
+                })
 
     return {"docs": docs, "chunks": chunks}
